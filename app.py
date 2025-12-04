@@ -1,7 +1,7 @@
 import streamlit as st
 import os.path
 import json
-import html  # Added to fix the crash with email addresses
+import html
 from openai import OpenAI
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -175,8 +175,10 @@ def get_gmail_service():
             creds.refresh(Request())
         else:
             if not os.path.exists('credentials.json'):
-                st.error("Missing 'credentials.json'! Please download it from Google Cloud.")
+                st.error("Missing 'credentials.json'! Please upload it to your files.")
                 st.stop()
+            # NOTE: This flow only works locally. For cloud deployment, you usually need token.json uploaded
+            # or a more advanced secrets configuration.
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
         with open('token.json', 'w') as token:
@@ -211,7 +213,6 @@ def generate_briefing(email_list, api_key):
     if not email_list: return None
     client = OpenAI(api_key=api_key)
 
-    # UPDATED PROMPT: Explicitly asking for 5 items and FULL drafts
     system_instruction = """
     You are an executive assistant. Analyze emails from the last 24h.
     Return STRICT JSON with these 5 keys:
@@ -248,18 +249,22 @@ def generate_briefing(email_list, api_key):
         return None
 
 # --- UI LAYOUT ---
-with st.sidebar:
-    st.header("⚙️ Settings")
-    user_api_key = st.text_input("Enter OpenAI API Key", type="password")
 
 # BANNER
 st.markdown('<div class="banner-container"><h1>🚀 Teacher\'s Command Center</h1><p>Daily Intelligence & Action Plan</p></div>', unsafe_allow_html=True)
 
 # BUTTON
 if st.button("RUN DAILY ANALYSIS", type="primary", use_container_width=True):
-    if not user_api_key:
-        st.warning("Please enter your API Key in the sidebar.")
-    else:
+    
+    # 1. RETRIEVE KEY FROM SECRETS (Option 1)
+    # This looks for the key in your "Advanced Settings" on the deploy page
+    try:
+        user_api_key = st.secrets["OPENAI_API_KEY"]
+    except:
+        st.error("🚨 API Key not found! Please add `OPENAI_API_KEY` to the Secrets in Advanced Settings.")
+        st.stop()
+
+    if user_api_key:
         service = get_gmail_service()
         if service:
             with st.spinner('Accessing secure communications...'):
@@ -285,7 +290,7 @@ if st.button("RUN DAILY ANALYSIS", type="primary", use_container_width=True):
                     stats = data.get('traffic', {})
                     traf_html = f"<b>Total:</b> {stats.get('total',0)}<br><br><b>New Threads:</b> {stats.get('new',0)}<br><br><b>Replies:</b> {stats.get('continuing',0)}"
                     
-                    # Hot Takes Loop (Flush Left HTML)
+                    # Hot Takes Loop
                     hot_html = ""
                     hot_list = data.get('hot_takes', [])
                     for i, item in enumerate(hot_list):
@@ -294,7 +299,6 @@ if st.button("RUN DAILY ANALYSIS", type="primary", use_container_width=True):
                         s_summ = clean_text(item.get('summary'))
                         s_note = clean_text(item.get('crucial_note'))
                         
-                        # NO INDENTATION in the f-string below:
                         hot_html += f"""<div class="hot-take-item">
 <span class="hot-take-title">🔥 {i+1}. {s_subj}</span>
 <span class="hot-take-meta"><b>From:</b> {s_send}</span>
@@ -306,21 +310,18 @@ if st.button("RUN DAILY ANALYSIS", type="primary", use_container_width=True):
                     draft_html = ""
                     draft_list = data.get('drafts', [])
                     for i, d in enumerate(draft_list):
-                         # Fallback title if lists don't match
                          subject_ref = "Email Response"
                          if i < len(hot_list):
                              subject_ref = clean_text(hot_list[i].get('subject'))
                          
                          clean_draft = clean_text(d)
                          
-                         # NO INDENTATION below:
                          draft_html += f"""<div class="draft-wrapper">
 <span class="draft-label">Draft for: "{subject_ref}"</span>
 <div class="draft-block">{clean_draft}</div>
 </div>"""
 
                     # --- RENDER UI ---
-                    
                     col1, col2, col3 = st.columns(3)
                     with col1:
                         st.markdown(f'<div class="metric-card card-blue"><div class="card-header">📅 Schedule</div>{sched_html}</div>', unsafe_allow_html=True)
